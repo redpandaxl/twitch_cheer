@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cheer Queue</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    #cheerList {
+      list-style-type: none;
+      padding: 0;
+    }
+    #cheerList li {
+      margin: 5px 0;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+      background-color: #f9f9f9;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .buttons {
+      display: flex;
+      gap: 10px;
+    }
+    .button {
+      padding: 5px 10px;
+      font-size: 14px;
+      cursor: pointer;
+      border: none;
+      border-radius: 3px;
+    }
+    .process-button {
+      background-color: #4CAF50;
+      color: white;
+    }
+    .remove-button {
+      background-color: #f44336;
+      color: white;
+    }
+    button {
+      margin-top: 20px;
+      padding: 10px 20px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Cheer Queue</h1>
+  <ul id="cheerList"></ul>
+  <script>
+    document.addEventListener('DOMContentLoaded', (event) => {
+      console.log('DOM fully loaded and parsed');
+
+      async function fetchQueue() {
+        console.log('Fetching queue...');
+        try {
+          const response = await fetch('/queue');
+          console.log('Response:', response);
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          const queue = await response.json();
+          console.log('Queue:', queue);
+          const cheerList = document.getElementById('cheerList');
+          console.log('CheerList Element:', cheerList);
+          cheerList.innerHTML = '';
+          queue.forEach((cheer, index) => {
+            console.log('Adding cheer to list:', cheer);
+            const listItem = document.createElement('li');
+            listItem.innerHTML = `${cheer.user}: ${cheer.message} (${cheer.bits} bits)`;
+            const buttonsDiv = document.createElement('div');
+            buttonsDiv.className = 'buttons';
+            
+            const processButton = document.createElement('button');
+            processButton.className = 'button process-button';
+            processButton.textContent = 'Process';
+            processButton.onclick = () => processCheer(index);
+
+            const removeButton = document.createElement('button');
+            removeButton.className = 'button remove-button';
+            removeButton.textContent = 'Remove';
+            removeButton.onclick = () => removeCheer(index);
+
+            buttonsDiv.appendChild(processButton);
+            buttonsDiv.appendChild(removeButton);
+            listItem.appendChild(buttonsDiv);
+            cheerList.appendChild(listItem);
+          });
+          console.log('Updated cheerList:', cheerList.innerHTML);
+        } catch (error) {
+          console.error('Error fetching queue:', error);
+        }
+      }
+
+      async function processCheer(index) {
+        console.log(`Processing cheer at index ${index}...`);
+        try {
+          const response = await fetch('/process', { method: 'POST' });
+          console.log('Response:', response);
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          const result = await response.json();
+          console.log('Result:', result);
+          if (result.success) {
+            alert(`Processed cheer: ${result.cheer.message}`);
+            fetchQueue();
+          } else {
+            alert(result.message);
+          }
+        } catch (error) {
+          console.error('Error processing cheer:', error);
+        }
+      }
+
+      function removeCheer(index) {
+        console.log(`Removing cheer at index ${index}...`);
+        fetch('/queue', { method: 'DELETE', body: JSON.stringify({ index }), headers: { 'Content-Type': 'application/json' } })
+          .then(response => response.json())
+          .then(result => {
+            console.log('Result:', result);
+            fetchQueue();
+          })
+          .catch(error => {
+            console.error('Error removing cheer:', error);
+          });
+      }
+
+      setInterval(fetchQueue, 5000); // Refresh queue every 5 seconds
+      fetchQueue(); // Initial fetch
+    });
+  </script>
+</body>
+</html>
+

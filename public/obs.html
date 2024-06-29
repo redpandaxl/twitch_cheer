@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OBS TTS Player</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #333;
+      color: #fff;
+      margin: 0;
+    }
+    #message {
+      font-size: 24px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div id="message">Waiting for TTS...</div>
+  <audio id="ttsAudio" autoplay></audio>
+  <script>
+    const audioElement = document.getElementById('ttsAudio');
+    const messageElement = document.getElementById('message');
+
+    function playTTS(audioUrl, message) {
+      audioElement.src = audioUrl;
+      messageElement.textContent = message;
+    }
+
+    const eventSource = new EventSource('/tts-stream');
+    eventSource.onmessage = function(event) {
+      const data = JSON.parse(event.data);
+      playTTS(data.audioUrl, data.message);
+    };
+  </script>
+</body>
+</html>
+

@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  twitch-cheer-queue:
+    build: .
+    environment:
+      TWITCH_CLIENT_ID: ${TWITCH_CLIENT_ID}
+      TWITCH_ACCESS_TOKEN: ${TWITCH_ACCESS_TOKEN}
+      TWITCH_CHANNEL: ${TWITCH_CHANNEL}
+      TWITCH_OAUTH_TOKEN: ${TWITCH_OAUTH_TOKEN}
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_CHANNEL_ID: ${DISCORD_CHANNEL_ID}
+      ELEVEN_LABS_API_KEY: ${ELEVEN_LABS_API_KEY}
+    ports:
+      - "3000:3000"
+
