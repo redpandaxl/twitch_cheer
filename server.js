@@ -5,8 +5,8 @@ const express = require('express');
 const axios = require('axios');
 const { Client, GatewayIntentBits } = require('discord.js');
 const path = require('path');
-const fs = require('fs');
-const { exec } = require('child_process');
+const fs = require('fs').promises;
+const crypto = require('crypto');
 
 // Debug function
 function debug(message, data = null) {
@@ -21,51 +21,46 @@ const twitchClientId = process.env.TWITCH_CLIENT_ID;
 const twitchAccessToken = process.env.TWITCH_ACCESS_TOKEN;
 const twitchChannel = process.env.TWITCH_CHANNEL;
 const elevenLabsApiKey = process.env.ELEVEN_LABS_API_KEY;
+const discordToken = process.env.DISCORD_TOKEN;
+const discordChannelId = process.env.DISCORD_CHANNEL_ID;
 
 debug('Twitch Config:', { twitchClientId, twitchAccessToken, twitchChannel });
+debug('Discord Config:', { discordToken, discordChannelId });
 
 const authProvider = new StaticAuthProvider(twitchClientId, twitchAccessToken);
 debug('AuthProvider created:', authProvider);
 
 let chatClient;
+let cheerQueue = [];
+let ttsClients = []; // Array to hold SSE clients for TTS
 
 try {
     chatClient = new ChatClient({ authProvider, channels: [twitchChannel] });
     debug('ChatClient created:', chatClient);
+
+    chatClient.onMessage((channel, user, message, msg) => {
+        debug('Received message:', { channel, user, message, msg });
+        if (msg.isCheer) {
+            const charLimit = getCharacterLimit(msg.bits);
+            const truncatedMessage = truncateMessage(message, charLimit);
+            cheerQueue.push({ user: user.displayName, message: truncatedMessage, bits: msg.bits });
+            debug('Cheer added to queue:', { user: user.displayName, message: truncatedMessage, bits: msg.bits });
+        }
+    });
+
+    chatClient.connect().then(() => {
+        debug('Connected to Twitch chat');
+    }).catch((error) => {
+        debug('Error connecting to Twitch chat:', error);
+    });
 } catch (error) {
     debug('Error creating ChatClient:', error);
 }
 
-let cheerQueue = [];
-let ttsClients = []; // Array to hold SSE clients for TTS
-
-if (chatClient) {
-    chatClient.onMessage((channel, user, message, msg) => {
-        debug('Received message:', { channel, user, message, msg });
-        if (msg.isCheer) {
-            cheerQueue.push({ user: user.displayName, message, bits: msg.bits });
-            debug('Cheer added to queue:', { user: user.displayName, message, bits: msg.bits });
-        }
-    });
-
-    (async () => {
-        try {
-            await chatClient.connect();
-            debug('Connected to Twitch chat');
-        } catch (error) {
-            debug('Error connecting to Twitch chat:', error);
-        }
-    })();
-}
-
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public'))); // Serve static files from public directory
-
-const discordToken = process.env.DISCORD_TOKEN;
-const discordChannelId = process.env.DISCORD_CHANNEL_ID;
-
-debug('Discord Config:', { discordToken, discordChannelId });
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/audio', express.static(path.join(__dirname, 'public')));
 
 // Function to get the current stream information
 async function getStreamInfo() {
@@ -75,9 +70,28 @@ async function getStreamInfo() {
             'Authorization': `Bearer ${twitchAccessToken}`
         }
     });
-    const streamData = response.data.data[0];
-    return streamData;
+    return response.data.data[0];
 }
+
+// Characrter Limit check
+function getCharacterLimit(bits) {
+    if (bits <= 100) {
+        return 100;
+    } else if (bits <= 1000) {
+        return 250;
+    } else {
+        return 500;
+    }
+}
+
+// Message exceeds character limit 
+function truncateMessage(message, limit) {
+    if (message.length <= limit) {
+        return message;
+    }
+    return message.slice(0, limit - 3) + '...';
+}
+
 
 // Function to get the VOD information
 async function getVodInfo(userId) {
@@ -87,30 +101,40 @@ async function getVodInfo(userId) {
             'Authorization': `Bearer ${twitchAccessToken}`
         }
     });
-    const vodData = response.data.data[0];
-    return vodData;
+    return response.data.data[0];
 }
 
 // Function to get TTS audio from Eleven Labs
 async function getTtsAudio(text) {
-    const response = await axios.post('https://api.elevenlabs.io/v1/text-to-speech', {
-        text: text,
-        voice: 'your-voice-id' // Replace with your desired voice ID
-    }, {
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${elevenLabsApiKey}`
-        },
-        responseType: 'arraybuffer'
-    });
-
-    return response.data;
+    try {
+        console.log('Sending TTS request to ElevenLabs:', text);
+        const response = await axios.post('https://api.elevenlabs.io/v1/text-to-speech/iP95p4xoKVk53GoZ742B', {
+            text: text,
+            model_id: "eleven_monolingual_v1",
+            voice_settings: {
+                stability: 0.5,
+                similarity_boost: 0.5
+            }
+        }, {
+            headers: {
+                'Content-Type': 'application/json',
+                'xi-api-key': elevenLabsApiKey
+            },
+            responseType: 'arraybuffer'
+        });
+        console.log('Received TTS response from ElevenLabs, size:', response.data.byteLength);
+        return response.data;
+    } catch (error) {
+        console.error('Error in getTtsAudio:', error.response ? error.response.data : error.message);
+        throw error;
+    }
 }
 
 // Function to notify SSE clients
 function notifyTtsClients(audioUrl, message) {
+    console.log(`Notifying ${ttsClients.length} SSE clients:`, { audioUrl, message });
     ttsClients.forEach(client => {
-        client.write(`data: ${JSON.stringify({ audioUrl, message })}\n\n`);
+        client.res.write(`data: ${JSON.stringify({ audioUrl, message })}\n\n`);
     });
 }
 
@@ -126,46 +150,62 @@ app.post('/process', async (req, res) => {
         debug('Processing cheer:', cheer);
 
         try {
-            // Get the current stream information
-            const streamInfo = await getStreamInfo();
-            if (!streamInfo) {
-                throw new Error('No active stream found');
+            let streamInfo, vodInfo, url;
+
+            try {
+                streamInfo = await getStreamInfo();
+                if (!streamInfo) {
+                    throw new Error('No active stream found');
+                }
+
+                const streamStartTime = new Date(streamInfo.started_at);
+                const currentTime = new Date();
+                const elapsedTime = Math.floor((currentTime - streamStartTime) / 1000);
+
+                const minutes = Math.floor(elapsedTime / 60);
+                const seconds = elapsedTime % 60;
+
+                vodInfo = await getVodInfo(streamInfo.user_id);
+                const vodId = vodInfo.id;
+
+                const timestamp = `${minutes}m${seconds}s`;
+                url = `https://www.twitch.tv/${twitchChannel}/v/${vodId}?t=${timestamp}`;
+
+                const discordClient = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
+                await discordClient.login(discordToken);
+                const channel = await discordClient.channels.fetch(discordChannelId);
+                await channel.send(`Cheer from ${cheer.user}: ${cheer.message}\n${url}`);
+                debug('Message sent to Discord:', { user: cheer.user, message: cheer.message, url });
+            } catch (streamError) {
+                debug('Error getting stream info or sending to Discord:', streamError);
             }
 
-            const streamStartTime = new Date(streamInfo.started_at);
-            const currentTime = new Date();
-            const elapsedTime = Math.floor((currentTime - streamStartTime) / 1000); // elapsed time in seconds
-
-            const minutes = Math.floor(elapsedTime / 60);
-            const seconds = elapsedTime % 60;
-
-            // Get the VOD information
-            const vodInfo = await getVodInfo(streamInfo.user_id);
-            const vodId = vodInfo.id;
-
-            const timestamp = `${minutes}m${seconds}s`;
-            const url = `https://www.twitch.tv/${twitchChannel}/v/${vodId}?t=${timestamp}`;
-
-            const discordClient = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
-            await discordClient.login(discordToken);
-            const channel = await discordClient.channels.fetch(discordChannelId);
-            await channel.send(`Cheer from ${cheer.user}: ${cheer.message}\n${url}`);
-            debug('Message sent to Discord:', { user: cheer.user, message: cheer.message, url });
-
-            // Get TTS audio from Eleven Labs
             const ttsAudio = await getTtsAudio(`Cheer from ${cheer.user}: ${cheer.message}`);
-            const audioFilePath = path.join(__dirname, 'public', 'cheer.mp3');
-            fs.writeFileSync(audioFilePath, ttsAudio);
-
-            // Notify SSE clients to play the audio
-            notifyTtsClients('/cheer.mp3', `Cheer from ${cheer.user}: ${cheer.message}`);
-
+            
+            const uniqueId = crypto.randomBytes(8).toString('hex');
+            const audioFileName = `cheer_${uniqueId}.mp3`;
+            const audioFilePath = path.join(__dirname, 'public', audioFileName);
+            
+            await fs.writeFile(audioFilePath, ttsAudio);
+            console.log(`TTS audio file written to ${audioFilePath}`);
+        
+            notifyTtsClients(`/audio/${audioFileName}`, `Cheer from ${cheer.user}: ${cheer.message}`);
+        
             debug('TTS audio prepared and notification sent');
+        
+            setTimeout(async () => {
+                try {
+                    await fs.unlink(audioFilePath);
+                    console.log(`Deleted file: ${audioFilePath}`);
+                } catch (err) {
+                    console.error(`Error deleting file ${audioFilePath}:`, err);
+                }
+            }, 60000);
 
-            res.json({ success: true, cheer, url });
+            res.json({ success: true, cheer, url: url || null });
         } catch (error) {
             debug('Error processing cheer:', error);
-            res.status(500).json({ success: false, message: 'Failed to process cheer', error });
+            res.status(500).json({ success: false, message: 'Failed to process cheer', error: error.message });
         }
     } else {
         debug('No cheers in queue');
@@ -173,7 +213,6 @@ app.post('/process', async (req, res) => {
     }
 });
 
-// Handle DELETE request to remove a cheer without processing
 app.delete('/queue', (req, res) => {
     debug('DELETE /queue');
     const { index } = req.body;
@@ -187,13 +226,14 @@ app.delete('/queue', (req, res) => {
     }
 });
 
-// Add a test route to simulate a cheer
 app.post('/test-cheer', (req, res) => {
     debug('POST /test-cheer');
     const { user, message, bits } = req.body;
+    const charLimit = getCharacterLimit(bits || 100);
+    const truncatedMessage = truncateMessage(message || 'This is a test cheer!', charLimit);
     const cheer = {
         user: user || 'testuser',
-        message: message || 'This is a test cheer!',
+        message: truncatedMessage,
         bits: bits || 100
     };
     cheerQueue.push(cheer);
@@ -201,22 +241,29 @@ app.post('/test-cheer', (req, res) => {
     res.json({ success: true, cheer });
 });
 
-// Serve the obs.html page
 app.get('/obs', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'obs.html'));
 });
 
-// SSE endpoint for TTS notifications
 app.get('/tts-stream', (req, res) => {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
+    console.log('New SSE connection established');
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+    });
     res.flushHeaders();
 
-    ttsClients.push(res);
+    const clientId = Date.now();
+    const newClient = {
+        id: clientId,
+        res: res
+    };
+    ttsClients.push(newClient);
 
     req.on('close', () => {
-        ttsClients = ttsClients.filter(client => client !== res);
+        console.log(`SSE connection closed: ${clientId}`);
+        ttsClients = ttsClients.filter(client => client.id !== clientId);
     });
 });
 
@@ -228,4 +275,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     debug(`Server is running on port ${PORT}`);
 });
-

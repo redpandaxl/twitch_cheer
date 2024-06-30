@@ -1,44 +1,91 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OBS TTS Player</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      height: 100vh;
-      background-color: #333;
-      color: #fff;
-      margin: 0;
-    }
-    #message {
-      font-size: 24px;
-      text-align: center;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OBS TTS Player</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #333;
+            color: #fff;
+            margin: 0;
+        }
+        #message {
+            font-size: 24px;
+            text-align: center;
+        }
+        #debug {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            font-size: 12px;
+            color: #aaa;
+        }
+    </style>
 </head>
 <body>
-  <div id="message">Waiting for TTS...</div>
-  <audio id="ttsAudio" autoplay></audio>
-  <script>
-    const audioElement = document.getElementById('ttsAudio');
-    const messageElement = document.getElementById('message');
+    <div id="message">Waiting for TTS...</div>
+    <div id="audioContainer"></div>
+    <div id="debug"></div>
+    <script>
+        const messageElement = document.getElementById('message');
+        const debugElement = document.getElementById('debug');
 
-    function playTTS(audioUrl, message) {
-      audioElement.src = audioUrl;
-      messageElement.textContent = message;
-    }
+        function addDebugMessage(msg) {
+            const now = new Date().toISOString();
+            debugElement.innerHTML += `${now}: ${msg}<br>`;
+            console.log(msg);
+        }
 
-    const eventSource = new EventSource('/tts-stream');
-    eventSource.onmessage = function(event) {
-      const data = JSON.parse(event.data);
-      playTTS(data.audioUrl, data.message);
-    };
-  </script>
+        function playTTS(audioUrl, message) {
+            addDebugMessage(`Received TTS event: ${audioUrl}, ${message}`);
+            messageElement.textContent = message;
+
+            const newAudio = new Audio(audioUrl);
+            
+            newAudio.onerror = function(e) {
+                addDebugMessage(`Error loading audio: ${e.message}`);
+            };
+            
+            newAudio.oncanplaythrough = function() {
+                addDebugMessage('Audio can play through');
+                newAudio.play().catch(e => addDebugMessage(`Error playing audio: ${e.message}`));
+            };
+            
+            newAudio.onplay = function() {
+                addDebugMessage('Audio started playing');
+            };
+            
+            newAudio.onended = function() {
+                addDebugMessage('Audio finished playing');
+                newAudio.remove();
+            };
+
+            const audioContainer = document.getElementById('audioContainer');
+            audioContainer.innerHTML = ''; // Clear previous audio elements
+            audioContainer.appendChild(newAudio);
+        }
+
+        const eventSource = new EventSource('/tts-stream');
+        eventSource.onopen = function() {
+            addDebugMessage('SSE connection opened');
+        };
+        eventSource.onmessage = function(event) {
+            addDebugMessage(`Received SSE message: ${event.data}`);
+            const data = JSON.parse(event.data);
+            playTTS(data.audioUrl, data.message);
+        };
+        eventSource.onerror = function(error) {
+            addDebugMessage(`SSE Error: ${error.message}`);
+        };
+
+        addDebugMessage('OBS TTS Player script loaded');
+    </script>
 </body>
 </html>
-

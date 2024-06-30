@@ -98,25 +98,31 @@
       }
 
       async function processCheer(index) {
-        console.log(`Processing cheer at index ${index}...`);
-        try {
-          const response = await fetch('/process', { method: 'POST' });
-          console.log('Response:', response);
-          if (!response.ok) {
+    console.log(`Processing cheer at index ${index}...`);
+    try {
+        const response = await fetch('/process', { method: 'POST' });
+        console.log('Response:', response);
+        if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
-          }
-          const result = await response.json();
-          console.log('Result:', result);
-          if (result.success) {
-            alert(`Processed cheer: ${result.cheer.message}`);
-            fetchQueue();
-          } else {
-            alert(result.message);
-          }
-        } catch (error) {
-          console.error('Error processing cheer:', error);
         }
-      }
+        const result = await response.json();
+        console.log('Result:', result);
+        if (result.success) {
+            let message = `Processed cheer: ${result.cheer.message}`;
+            if (result.url) {
+                message += `\nVOD URL: ${result.url}`;
+            } else {
+                message += '\n(Streamer is offline, no VOD URL available)';
+            }
+            alert(message);
+            fetchQueue();
+        } else {
+            alert(result.message);
+        }
+    } catch (error) {
+        console.error('Error processing cheer:', error);
+    }
+}
 
       function removeCheer(index) {
         console.log(`Removing cheer at index ${index}...`);
