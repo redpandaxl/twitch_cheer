@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - Cheer Tester</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        form {
+            display: flex;
+            flex-direction: column;
+        }
+        label, input, textarea {
+            margin-bottom: 10px;
+        }
+        button {
+            max-width: 200px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Admin Panel - Cheer Tester</h1>
+    <form id="cheerForm">
+        <label for="username">Username:</label>
+        <input type="text" id="username" required>
+
+        <label for="bits">Bits:</label>
+        <input type="number" id="bits" required min="1">
+
+        <label for="message">Message:</label>
+        <textarea id="message" required></textarea>
+
+        <button type="submit">Send Test Cheer</button>
+    </form>
+
+    <div id="result"></div>
+
+    <script>
+        document.getElementById('cheerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const bits = document.getElementById('bits').value;
+            const message = document.getElementById('message').value;
+
+            try {
+                const response = await fetch('/test-cheer', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ user: username, bits: parseInt(bits), message }),
+                });
+
+                const result = await response.json();
+                document.getElementById('result').textContent = 
+                    result.success ? 'Test cheer sent successfully!' : 'Failed to send test cheer.';
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('result').textContent = 'An error occurred while sending the test cheer.';
+            }
+        });
+    </script>
+</body>
+</html>

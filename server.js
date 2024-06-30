@@ -190,10 +190,11 @@ app.delete('/queue', (req, res) => {
 // Add a test route to simulate a cheer
 app.post('/test-cheer', (req, res) => {
     debug('POST /test-cheer');
+    const { user, message, bits } = req.body;
     const cheer = {
-        user: 'testuser',
-        message: 'This is a test cheer!',
-        bits: 100
+        user: user || 'testuser',
+        message: message || 'This is a test cheer!',
+        bits: bits || 100
     };
     cheerQueue.push(cheer);
     debug('Test cheer added to queue:', cheer);
@@ -217,6 +218,10 @@ app.get('/tts-stream', (req, res) => {
     req.on('close', () => {
         ttsClients = ttsClients.filter(client => client !== res);
     });
+});
+
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
 const PORT = process.env.PORT || 3000;
